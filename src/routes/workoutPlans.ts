@@ -1,0 +1,208 @@
+// src/routes/workoutplan.ts
+
+import { Router, Response } from 'express';
+import { pool } from '../config/db';
+import authMiddleware, { AuthenticatedRequest } from '../middleware/auth';
+import rateLimit from 'express-rate-limit';
+import { logger } from '../utils/logger';
+import axios from 'axios';
+
+const router = Router();
+
+// ✅ Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyGenerator: (req: AuthenticatedRequest) => req.user?.id?.toString() || 'anonymous',
+  message: 'Too many requests, please try again later.',
+});
+
+// ✅ Ollama request with retry
+const ollamaRequestWithRetry = async (options: any, retries = 3, delay = 3000) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      logger.info(`[Ollama] Attempt ${i + 1}: ${options.url}`);
+      const response = await axios({ ...options, timeout: 180_000 });
+      logger.info(`[Ollama] Success on attempt ${i + 1}`);
+      return response;
+    } catch (error: any) {
+      if (error.code === 'ECONNABORTED' && i < retries - 1) {
+        logger.warn(`[Ollama Retry ${i + 1}/${retries}] Timeout. Retrying after ${delay}ms.`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        logger.error(`[Ollama] Request failed: ${error.message}`);
+        throw error;
+      }
+    }
+  }
+  throw new Error('Ollama request failed after all retries.');
+};
+
+// ✅ POST /api/workout-plans → Generate only (NO AUTO-SAVE)
+router.post('/', authMiddleware, limiter, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { prompt, duration } = req.body;
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'Prompt is required' });
+    }
+
+    const ollamaResponse = await ollamaRequestWithRetry({
+      method: 'POST',
+      url: 'http://localhost:11434/v1/completions',
+      data: {
+        model: 'llama3:latest',
+        prompt: `
+You are a helpful AI personal trainer. Respond ONLY with valid JSON.
+
+- Do NOT return markdown or comments.
+- Do NOT explain anything.
+- JSON must be complete and valid — starting with { and ending with }.
+
+Format:
+{
+  "date": "YYYY-MM-DD",
+  "prompt": "<original prompt>",
+  "exercises": [
+    {
+      "exercise_name": "Push Ups",
+      "sets": 3,
+      "reps": 12,
+      "weight": 0
+    }
+  ],
+  "notes": "Include clear training tips.",
+  "duration": 45
+}
+
+User prompt:
+"""
+${prompt}
+"""
+`.trim()
+        ,
+        max_tokens: 500,
+        temperature: 0.5,
+      },
+      headers: { 'Content-Type': 'application/json' },
+    });
+    let rawText = ollamaResponse?.data.choices?.[0]?.text?.trim();
+
+// Clean up code block and smart quotes
+if (rawText?.startsWith('```')) {
+  rawText = rawText.replace(/```(?:json)?/gi, '').replace(/```$/, '').trim();
+}
+rawText = rawText.replace(/[“”]/g, '"');
+
+// Auto-fix missing closing brace if likely
+if (rawText && !rawText.trim().endsWith('}')) {
+  rawText += '}';
+}
+
+
+
+    let workoutPlanData;
+    try {
+      // const rawText = ollamaResponse?.data.choices?.[0]?.text?.trim();
+      // console.log(rawText)
+workoutPlanData = JSON.parse(rawText);
+    } catch {
+      return res.status(500).json({ error: 'Failed to parse AI response' });
+    }
+
+    // ✅ Attach the original prompt for consistency
+    workoutPlanData.prompt = prompt;
+    workoutPlanData.duration = workoutPlanData.duration || duration || null;
+
+    res.status(200).json({ workoutPlan: workoutPlanData });
+  } catch (error: any) {
+    logger.error('[POST /api/workout-plans] Error:', { message: error.message });
+    res.status(500).json({ error: 'Failed to generate workout plan' });
+  }
+});
+
+// ✅ POST /api/workout-plans/save → Save manually
+router.post('/save', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { date, exercises, notes, prompt, duration } = req.body;
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Optional duplicate prevention (uncomment if needed):
+    // const check = await pool.query(`SELECT * FROM workout_plans_saved WHERE user_id = $1 AND date = $2`, [userId, date]);
+    // if (check.rowCount > 0) {
+    //   return res.status(409).json({ error: 'Workout plan for this date already exists' });
+    // }
+
+    const result = await pool.query(
+      `INSERT INTO workout_plans_saved (user_id, date, exercises, notes, prompt, duration)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        userId,
+        date,
+        JSON.stringify(exercises),
+        notes || '',
+        prompt || '',
+        duration || null
+      ]
+    );
+
+    res.status(201).json({ workoutPlan: result.rows[0] });
+  } catch (error: any) {
+    logger.error('[POST /api/workout-plans/save] Error:', { message: error.message });
+    res.status(500).json({ error: 'Failed to save workout plan' });
+  }
+});
+
+// ✅ GET /api/workout-plans/my → fetch user's plans
+router.get('/my', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const result = await pool.query(
+      `SELECT * FROM workout_plans_saved WHERE user_id = $1 ORDER BY created_at DESC`,
+      [userId]
+    );
+
+    res.json({ plans: result.rows });
+  } catch (error: any) {
+    logger.error('[GET /api/workout-plans/my] Error:', { message: error.message });
+    res.status(500).json({ error: 'Failed to fetch workout plans' });
+  }
+});
+
+// ✅ DELETE /api/workout-plans/:id → delete plan (PostgreSQL SERIAL id)
+router.delete('/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    const planId = req.params.id;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(planId)) {
+      return res.status(400).json({ error: 'Invalid UUID format' });
+    }
+
+    const result = await pool.query(
+      `DELETE FROM workout_plans_saved WHERE id = $1 AND user_id = $2 RETURNING *`,
+      [planId, userId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Workout plan not found or unauthorized' });
+    }
+
+    res.json({ message: 'Workout plan deleted successfully', deletedPlan: result.rows[0] });
+  } catch (error: any) {
+    logger.error('[DELETE /api/workout-plans/:id] Error:', { message: error.message });
+    res.status(500).json({ error: 'Failed to delete workout plan' });
+  }
+});
+
+
+export default router;
