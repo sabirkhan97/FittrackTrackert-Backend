@@ -118,17 +118,17 @@ const info = await transporter.sendMail({
         </p>
         
         <!-- Social icons -->
-        <div style="margin-top: 15px;">
-          <a href="https://facebook.com/fittrackpro" style="display: inline-block; margin: 0 5px;"><img src="https://cdn.example.com/facebook-icon.png" alt="Facebook" width="24"></a>
-          <a href="https://instagram.com/fittrackpro" style="display: inline-block; margin: 0 5px;"><img src="https://cdn.example.com/instagram-icon.png" alt="Instagram" width="24"></a>
-          <a href="https://twitter.com/fittrackpro" style="display: inline-block; margin: 0 5px;"><img src="https://cdn.example.com/twitter-icon.png" alt="Twitter" width="24"></a>
         </div>
-      </div>
-    </div>
-  `,
-});
-
-    console.log('✅ EMAIL SENT INFO:', info);
+        </div>
+        `,
+      });
+      
+      console.log('✅ EMAIL SENT INFO:', info);
+      // <div style="margin-top: 15px;">
+      //   <a href="https://facebook.com/fittrackpro" style="display: inline-block; margin: 0 5px;"><img src="https://cdn.example.com/facebook-icon.png" alt="Facebook" width="24"></a>
+      //   <a href="https://instagram.com/fittrackpro" style="display: inline-block; margin: 0 5px;"><img src="https://cdn.example.com/instagram-icon.png" alt="Instagram" width="24"></a>
+      //   <a href="https://twitter.com/fittrackpro" style="display: inline-block; margin: 0 5px;"><img src="https://cdn.example.com/twitter-icon.png" alt="Twitter" width="24"></a>
+      // </div>
 
     // ✅ Sign JWT
     const token = jwt.sign(

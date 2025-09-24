@@ -270,7 +270,7 @@ router.post('/', authMiddleware, limiter, async (req: AuthenticatedRequest, res:
         messages: [
           {
             role: 'system',
-            content: `You are a helpful  personal trainer. Return ONLY JSON with no explanations or comments in the following format:
+            content: `You are a helpful AI personal trainer. Return ONLY JSON with no explanations or comments in the following format:
 
 {
   "date": "YYYY-MM-DD",
@@ -391,24 +391,17 @@ router.post('/', authMiddleware, limiter, async (req: AuthenticatedRequest, res:
 // });
 
 
-router.post('/save', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+ router.post('/save', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { date, exercises, notes, prompt, duration } = req.body;
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    if (!date || !exercises) {
-      return res.status(400).json({ error: 'Date and exercises are required' });
-    }
-
-    logger.info('[POST /api/workout-plans/save] Saving workout plan', {
-      userId,
-      date,
-      exercises,
-      notes,
-      prompt,
-      duration
-    });
+    // Optional duplicate prevention (uncomment if needed):
+    // const check = await pool.query(`SELECT * FROM workout_plans_saved WHERE user_id = $1 AND date = $2`, [userId, date]);
+    // if (check.rowCount > 0) {
+    //   return res.status(409).json({ error: 'Workout plan for this date already exists' });
+    // }
 
     const result = await pool.query(
       `INSERT INTO workout_plans_saved (user_id, date, exercises, notes, prompt, duration)
@@ -424,15 +417,12 @@ router.post('/save', authMiddleware, async (req: AuthenticatedRequest, res: Resp
       ]
     );
 
-    logger.info('[POST /api/workout-plans/save] Saved workout plan successfully', { result: result.rows[0] });
-
     res.status(201).json({ workoutPlan: result.rows[0] });
   } catch (error: any) {
-    logger.error('[POST /api/workout-plans/save] Error:', { message: error.message, stack: error.stack });
+    logger.error('[POST /api/workout-plans/save] Error:', { message: error.message });
     res.status(500).json({ error: 'Failed to save workout plan' });
   }
 });
-
 
 // ✅ GET /api/workout-plans/my → fetch user's plans
 router.get('/my', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {

@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoose from 'mongoose';
 import { logger } from './utils/logger';
+import http from 'http';
 
 // ✅ Routes
 import { authRoutes } from './routes/auth';
@@ -61,7 +62,6 @@ app.use('/api/profile', profileRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/diet-plans', dietPlansRouter);
 
-
 // ✅ Health check
 app.get('/', (req, res) => res.send('✅ API is working'));
 
@@ -74,11 +74,23 @@ app.use((req, res) => {
 // ✅ Error Handler
 app.use(errorHandler);
 
-// ✅ Start server
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  logger.info(`🚀 Server running on port ${PORT}`);
+// ✅ Create HTTP server from app
+const server = http.createServer(app);
+
+// ✅ Handle clientError to avoid Node warning
+server.on('clientError', (err, socket) => {
+  logger.warn('Client error:', err.message);
+  socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+  socket.destroy();  // <-- prevents the warning you saw
 });
+
+// ✅ Start server listening
+const PORT = Number(process.env.PORT) || 4000;
+
+server.listen(PORT, '0.0.0.0', () => {
+  logger.info(`🚀 Server running on http://0.0.0.0:${PORT}`);
+});
+
 
 // ✅ Export for tests (optional)
 export default app;
