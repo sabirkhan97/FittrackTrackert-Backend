@@ -48,7 +48,7 @@ app.use((req, res, next) => {
 
 // ✅ Mongo connection
 mongoose
-  .connect(process.env.MONGO_URI )
+  .connect(process.env.MONGO_URI as string)
   .then(() => logger.info('✅ MongoDB connected'))
   .catch((err) => logger.error('❌ MongoDB connection error:', err));
 
